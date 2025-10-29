@@ -1,3 +1,5 @@
+import {Producer} from "./Producer.js";
+
 export class Province {
     constructor(doc) {
         this._name = doc.name;
