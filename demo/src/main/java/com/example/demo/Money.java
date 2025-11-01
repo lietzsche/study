@@ -1,6 +1,6 @@
 package com.example.demo;
 
-public class Money {
+public class Money implements Expression {
     int amount;
     protected String currency;
 
@@ -9,12 +9,24 @@ public class Money {
         this.currency = currency;
     }
 
+    static Money dollar(int amount) {
+        return new Money(amount, "USD");
+    }
+
+    static Money franc(int amount) {
+    return new Money(amount, "CHF");
+    }
+
     Money times(int multiplier) {
         return new Money(amount * multiplier, currency);
     }
 
     String currency() {
         return  currency;
+    }
+
+    Expression plus(Money addend) {
+        return Money.dollar(amount + addend.amount);
     }
 
     @Override
