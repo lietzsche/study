@@ -5,7 +5,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-
+/**
+ * 테스트 주도 개발
+ * 1부(17장)까지,
+ * 2부 파이썬 차근 차근 따라할 일 남음
+ * */
 @SpringBootTest
 class DemoApplicationTests {
 
