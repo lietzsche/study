@@ -28,4 +28,9 @@ public class Document {
     public void clear() {
         this.text.setLength(0);
     }
+
+    public void setText(String value) {
+        this.text.setLength(0);
+        if (value != null) this.text.append(value);
+    }
 }

@@ -29,3 +29,8 @@ application {
 test {
     useJUnitPlatform()
 }
+
+// Windows 등의 환경에서 한글 소스 주석/문자열 인코딩 문제 방지
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}

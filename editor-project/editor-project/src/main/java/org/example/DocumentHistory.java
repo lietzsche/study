@@ -20,6 +20,12 @@ public class DocumentHistory {
         futureHistory.clear();
     }
 
+    void executeSet(String newText) {
+        history.addFirst(document.getText());
+        document.setText(newText);
+        futureHistory.clear();
+    }
+
     void undo() {
         doIt(futureHistory, history);
     }
@@ -32,7 +38,6 @@ public class DocumentHistory {
         if (sub.isEmpty()) return;
         add.addFirst(document.getText());
         String tmp = sub.removeFirst();
-        document.clear();
-        document.addText(tmp);
+        document.setText(tmp);
     }
 }
