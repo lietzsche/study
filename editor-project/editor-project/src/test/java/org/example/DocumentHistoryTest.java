@@ -55,4 +55,25 @@ class DocumentHistoryTest {
         history.redo(); // 한 번 더 실행해도 안전해야 함
         assertEquals("B", document.getText());
     }
+
+    @Test
+    void canUndoRedoFlagsAndLimit() {
+        // 히스토리 용량 제한(2)으로 생성
+        history = new DocumentHistory(document, 2);
+        assertFalse(history.canUndo());
+        assertFalse(history.canRedo());
+
+        history.executeAdd("1");
+        assertTrue(history.canUndo());
+        assertFalse(history.canRedo());
+
+        history.executeAdd("2");
+        history.executeAdd("3"); // 이 시점에서 가장 오래된 스냅샷은 버려짐
+
+        history.undo(); // -> "12" 상태가 됨
+        assertTrue(history.canRedo());
+
+        history.undo(); // -> "1" 상태가 됨 (더 이상 undo 불가)
+        assertFalse(history.canUndo());
+    }
 }

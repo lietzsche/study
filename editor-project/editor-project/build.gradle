@@ -24,10 +24,14 @@ javafx {
 
 application {
     mainClass = 'org.example.App'
+    applicationDefaultJvmArgs = ['-Dfile.encoding=UTF-8']
 }
 
 test {
     useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+    }
 }
 
 // Windows 등의 환경에서 한글 소스 주석/문자열 인코딩 문제 방지
