@@ -23,6 +23,7 @@ public class App extends Application {
     private Label statusBar;
     private RecentFilesService recentFiles;
     private double baseFontSize = 13.0;
+    private PreferencesService prefs;
 
     @Override
     public void start(Stage stage) {
@@ -39,8 +40,14 @@ public class App extends Application {
                 java.time.Clock.systemDefaultZone()
         );
 
+        // 환경설정 로드 및 적용
+        java.nio.file.Path prefStore = java.nio.file.Paths.get(System.getProperty("user.home"), ".tdd-editor", "prefs.properties");
+        prefs = new PreferencesService(prefStore);
         textArea.setText(controller.getText());
+        baseFontSize = prefs.getDouble("font.size", baseFontSize);
         textArea.setStyle("-fx-font-size: " + baseFontSize + "px;");
+        textArea.setWrapText(prefs.getBoolean("view.wrap", false));
+        enableDragAndDropOpen();
         textArea.addEventFilter(KeyEvent.KEY_PRESSED, this::handleShortcuts);
         textArea.textProperty().addListener((obs, oldText, newText) -> {
             if (programmaticUpdate) return;
@@ -61,11 +68,30 @@ public class App extends Application {
         Scene scene = new Scene(root, 800, 600);
 
         stage.setScene(scene);
+        // 창 크기/위치 복원
+        double w = Math.max(400, prefs.getDouble("win.width", 800));
+        double h = Math.max(300, prefs.getDouble("win.height", 600));
+        stage.setWidth(w);
+        stage.setHeight(h);
+        double x = prefs.getDouble("win.x", Double.NaN);
+        double y = prefs.getDouble("win.y", Double.NaN);
+        if (!Double.isNaN(x) && !Double.isNaN(y)) {
+            stage.setX(x);
+            stage.setY(y);
+        }
         updateWindowTitle(stage);
         stage.setOnCloseRequest(e -> {
             if (!confirmClose(stage)) {
                 e.consume();
             } else {
+                // 환경설정 저장
+                prefs.setDouble("font.size", baseFontSize);
+                prefs.setBoolean("view.wrap", textArea.isWrapText());
+                prefs.setDouble("win.width", stage.getWidth());
+                prefs.setDouble("win.height", stage.getHeight());
+                prefs.setDouble("win.x", stage.getX());
+                prefs.setDouble("win.y", stage.getY());
+                prefs.save();
                 autoSaveService.stop();
             }
         });
@@ -109,6 +135,7 @@ public class App extends Application {
         MenuItem miOpen = new MenuItem("Open...");
         MenuItem miSave = new MenuItem("Save");
         MenuItem miSaveAs = new MenuItem("Save As...");
+        MenuItem miOpenFolder = new MenuItem("Open Containing Folder");
         MenuItem miExit = new MenuItem("Exit");
 
         miNew.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.N, KeyCombination.CONTROL_DOWN));
@@ -139,26 +166,42 @@ public class App extends Application {
 
         miSave.setOnAction(e -> doSave(stage, false));
         miSaveAs.setOnAction(e -> doSave(stage, true));
+        miOpenFolder.setOnAction(e -> doOpenContainingFolder());
         miExit.setOnAction(e -> stage.close());
 
         Menu recentMenu = new Menu("Open Recent");
         recentMenu.setOnShowing(e -> rebuildRecentMenu(stage, recentMenu));
-        menuFile.getItems().addAll(miNew, miOpen, recentMenu, miSave, miSaveAs, new SeparatorMenuItem(), miExit);
+        menuFile.getItems().addAll(miNew, miOpen, recentMenu, miSave, miSaveAs, miOpenFolder, new SeparatorMenuItem(), miExit);
 
         Menu menuEdit = new Menu("Edit");
         MenuItem miUndo = new MenuItem("Undo");
         MenuItem miRedo = new MenuItem("Redo");
         MenuItem miFind = new MenuItem("Find...");
         MenuItem miReplace = new MenuItem("Replace...");
+        MenuItem miGoto = new MenuItem("Go To Line...");
+        MenuItem miCut = new MenuItem("Cut");
+        MenuItem miCopy = new MenuItem("Copy");
+        MenuItem miPaste = new MenuItem("Paste");
+        MenuItem miSelectAll = new MenuItem("Select All");
         miUndo.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.Z, KeyCombination.CONTROL_DOWN));
         miRedo.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.Y, KeyCombination.CONTROL_DOWN));
         miFind.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.F, KeyCombination.CONTROL_DOWN));
         miReplace.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.H, KeyCombination.CONTROL_DOWN));
+        miGoto.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.G, KeyCombination.CONTROL_DOWN));
+        miCut.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.X, KeyCombination.CONTROL_DOWN));
+        miCopy.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.C, KeyCombination.CONTROL_DOWN));
+        miPaste.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.V, KeyCombination.CONTROL_DOWN));
+        miSelectAll.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.A, KeyCombination.CONTROL_DOWN));
         miUndo.setOnAction(e -> { controller.undo(); applyDocumentToEditor(); });
         miRedo.setOnAction(e -> { controller.redo(); applyDocumentToEditor(); });
         miFind.setOnAction(e -> doFind(stage));
         miReplace.setOnAction(e -> doReplace(stage));
-        menuEdit.getItems().addAll(miUndo, miRedo, new SeparatorMenuItem(), miFind, miReplace);
+        miGoto.setOnAction(e -> doGotoLine(stage));
+        miCut.setOnAction(e -> textArea.cut());
+        miCopy.setOnAction(e -> textArea.copy());
+        miPaste.setOnAction(e -> textArea.paste());
+        miSelectAll.setOnAction(e -> textArea.selectAll());
+        menuEdit.getItems().addAll(miUndo, miRedo, new SeparatorMenuItem(), miCut, miCopy, miPaste, miSelectAll, new SeparatorMenuItem(), miFind, miReplace, miGoto);
 
         Menu menuView = new Menu("View");
         MenuItem miWrap = new MenuItem("Toggle Word Wrap");
@@ -264,7 +307,9 @@ public class App extends Application {
             if (text.charAt(i) == '\n') { line++; col = 1; } else { col++; }
         }
         int length = text.length();
-        statusBar.setText(String.format("Ln %d, Col %d | Chars %d", line, col, length));
+        int words = (int) java.util.Arrays.stream(text.split("\\s+"))
+                .filter(s -> !s.isBlank()).count();
+        statusBar.setText(String.format("Ln %d, Col %d | Chars %d | Words %d", line, col, length, words));
     }
 
     private void rebuildRecentMenu(Stage stage, Menu recentMenu) {
@@ -294,6 +339,69 @@ public class App extends Application {
     private void setFontSize(double size) {
         baseFontSize = size;
         textArea.setStyle("-fx-font-size: " + baseFontSize + "px;");
+    }
+
+    private void doGotoLine(Stage stage) {
+        TextInputDialog dlg = new TextInputDialog();
+        dlg.setTitle("Go To Line");
+        dlg.setHeaderText("이동할 줄 번호를 입력하세요");
+        dlg.setContentText("Line:");
+        dlg.initOwner(stage);
+        dlg.showAndWait().ifPresent(s -> {
+            try {
+                int target = Integer.parseInt(s.trim());
+                if (target < 1) return;
+                String content = controller.getText();
+                int line = 1;
+                int idx = 0;
+                while (line < target && idx < content.length()) {
+                    if (content.charAt(idx) == '\n') line++;
+                    idx++;
+                }
+                final int pos = Math.min(idx, content.length());
+                programmaticUpdate = true;
+                try { textArea.positionCaret(pos); }
+                finally { programmaticUpdate = false; }
+                textArea.requestFocus();
+            } catch (NumberFormatException ex) {
+                showError("Go To Line", new RuntimeException("올바른 숫자를 입력하세요."));
+            }
+        });
+    }
+
+    private void enableDragAndDropOpen() {
+        textArea.setOnDragOver(e -> {
+            if (e.getDragboard().hasFiles()) {
+                e.acceptTransferModes(javafx.scene.input.TransferMode.COPY);
+            }
+            e.consume();
+        });
+        textArea.setOnDragDropped(e -> {
+            var db = e.getDragboard();
+            boolean success = false;
+            if (db.hasFiles() && !db.getFiles().isEmpty()) {
+                java.io.File f = db.getFiles().get(0);
+                try {
+                    controller.open(f.toPath());
+                    applyDocumentToEditor();
+                    updateWindowTitle((Stage) textArea.getScene().getWindow());
+                    recentFiles.push(controller.getCurrentFile());
+                    success = true;
+                } catch (Exception ex) {
+                    showError("파일 열기 실패", ex);
+                }
+            }
+            e.setDropCompleted(success);
+            e.consume();
+        });
+    }
+
+    private void doOpenContainingFolder() {
+        try {
+            var p = controller.getCurrentFile();
+            if (p == null) return;
+            java.awt.Desktop.getDesktop().open(p.getParent().toFile());
+        } catch (Exception ignored) {}
     }
 
     private void doFind(Stage stage) {
