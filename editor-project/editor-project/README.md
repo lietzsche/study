@@ -22,7 +22,13 @@ Windows에서 한글 인코딩 혼선을 줄이기 위해 컴파일 및 실행 �
 - `src/main/java/org/example/FileService.java`
 - `src/main/java/org/example/AutoSaveService.java`
 - `src/main/java/org/example/App.java`
+- `src/main/java/org/example/EditorController.java`
 - `src/test/java/org/example/*.java`
+
+## 변경 사항 하이라이트
+- UI와 도메인 로직 분리를 위해 `EditorController`를 도입했습니다.
+- 파일 저장 시 UTF-8 인코딩을 명시적으로 사용합니다.
+- 컨트롤러 단위 테스트(`EditorControllerTest`)를 추가하여 동작을 검증합니다.
 
 ## 향후 개선 아이디어
 - 명령(Command) 객체로 리팩터링(Add/Remove 등)
@@ -30,4 +36,3 @@ Windows에서 한글 인코딩 혼선을 줄이기 위해 컴파일 및 실행 �
 - 자동 저장 복구 UI(크래시/비정상 종료 시 임시 파일 복원 안내)
 - 다국어(i18n) 리소스 번들 적용
 - CI 설정(GitHub Actions)으로 테스트 자동화
-

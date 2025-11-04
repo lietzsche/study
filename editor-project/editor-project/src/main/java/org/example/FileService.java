@@ -14,7 +14,7 @@ public class FileService {
         if (parent != null) {
             Files.createDirectories(parent);
         }
-        Files.writeString(path, content);
+        Files.writeString(path, content, StandardCharsets.UTF_8);
     }
 
     public String load(Path path) throws IOException {
@@ -23,4 +23,3 @@ public class FileService {
         return new String(bytes, StandardCharsets.UTF_8);
     }
 }
-
