@@ -4,6 +4,7 @@ import javafx.application.Application;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.layout.GridPane;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyEvent;
@@ -20,6 +21,8 @@ public class App extends Application {
     private AutoSaveService autoSaveService;
     private EditorController controller;
     private Label statusBar;
+    private RecentFilesService recentFiles;
+    private double baseFontSize = 13.0;
 
     @Override
     public void start(Stage stage) {
@@ -37,6 +40,7 @@ public class App extends Application {
         );
 
         textArea.setText(controller.getText());
+        textArea.setStyle("-fx-font-size: " + baseFontSize + "px;");
         textArea.addEventFilter(KeyEvent.KEY_PRESSED, this::handleShortcuts);
         textArea.textProperty().addListener((obs, oldText, newText) -> {
             if (programmaticUpdate) return;
@@ -44,6 +48,10 @@ public class App extends Application {
             updateWindowTitle(stage);
             updateStatusBar();
         });
+
+        // 서비스들 초기화
+        java.nio.file.Path recentStore = java.nio.file.Paths.get(System.getProperty("user.home"), ".tdd-editor", "recent.properties");
+        recentFiles = new RecentFilesService(recentStore, 10);
 
         MenuBar menuBar = createMenuBar(stage);
         statusBar = buildStatusBar();
@@ -122,6 +130,7 @@ public class App extends Application {
                     controller.open(file.toPath());
                     updateWindowTitle(stage);
                     applyDocumentToEditor();
+                    recentFiles.push(controller.getCurrentFile());
                 } catch (Exception ex) {
                     showError("파일 열기 실패", ex);
                 }
@@ -132,24 +141,38 @@ public class App extends Application {
         miSaveAs.setOnAction(e -> doSave(stage, true));
         miExit.setOnAction(e -> stage.close());
 
-        menuFile.getItems().addAll(miNew, miOpen, miSave, miSaveAs, new SeparatorMenuItem(), miExit);
+        Menu recentMenu = new Menu("Open Recent");
+        recentMenu.setOnShowing(e -> rebuildRecentMenu(stage, recentMenu));
+        menuFile.getItems().addAll(miNew, miOpen, recentMenu, miSave, miSaveAs, new SeparatorMenuItem(), miExit);
 
         Menu menuEdit = new Menu("Edit");
         MenuItem miUndo = new MenuItem("Undo");
         MenuItem miRedo = new MenuItem("Redo");
         MenuItem miFind = new MenuItem("Find...");
+        MenuItem miReplace = new MenuItem("Replace...");
         miUndo.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.Z, KeyCombination.CONTROL_DOWN));
         miRedo.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.Y, KeyCombination.CONTROL_DOWN));
         miFind.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.F, KeyCombination.CONTROL_DOWN));
+        miReplace.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.H, KeyCombination.CONTROL_DOWN));
         miUndo.setOnAction(e -> { controller.undo(); applyDocumentToEditor(); });
         miRedo.setOnAction(e -> { controller.redo(); applyDocumentToEditor(); });
         miFind.setOnAction(e -> doFind(stage));
-        menuEdit.getItems().addAll(miUndo, miRedo, new SeparatorMenuItem(), miFind);
+        miReplace.setOnAction(e -> doReplace(stage));
+        menuEdit.getItems().addAll(miUndo, miRedo, new SeparatorMenuItem(), miFind, miReplace);
 
         Menu menuView = new Menu("View");
         MenuItem miWrap = new MenuItem("Toggle Word Wrap");
         miWrap.setOnAction(e -> textArea.setWrapText(!textArea.isWrapText()));
-        menuView.getItems().addAll(miWrap);
+        MenuItem miZoomIn = new MenuItem("Zoom In");
+        MenuItem miZoomOut = new MenuItem("Zoom Out");
+        MenuItem miZoomReset = new MenuItem("Reset Zoom");
+        miZoomIn.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.PLUS, KeyCombination.CONTROL_DOWN));
+        miZoomOut.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.MINUS, KeyCombination.CONTROL_DOWN));
+        miZoomReset.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.DIGIT0, KeyCombination.CONTROL_DOWN));
+        miZoomIn.setOnAction(e -> setFontSize(baseFontSize + 1));
+        miZoomOut.setOnAction(e -> setFontSize(Math.max(8, baseFontSize - 1)));
+        miZoomReset.setOnAction(e -> setFontSize(13));
+        menuView.getItems().addAll(miWrap, new SeparatorMenuItem(), miZoomIn, miZoomOut, miZoomReset);
 
         return new MenuBar(menuFile, menuEdit, menuView);
     }
@@ -166,6 +189,7 @@ public class App extends Application {
                 controller.save();
             }
             updateWindowTitle(stage);
+            recentFiles.push(controller.getCurrentFile());
         } catch (Exception ex) {
             showError("파일 저장 실패", ex);
         }
@@ -243,6 +267,35 @@ public class App extends Application {
         statusBar.setText(String.format("Ln %d, Col %d | Chars %d", line, col, length));
     }
 
+    private void rebuildRecentMenu(Stage stage, Menu recentMenu) {
+        recentMenu.getItems().clear();
+        var list = recentFiles.list();
+        if (list.isEmpty()) {
+            MenuItem empty = new MenuItem("(Empty)");
+            empty.setDisable(true);
+            recentMenu.getItems().add(empty);
+            return;
+        }
+        for (var p : list) {
+            MenuItem it = new MenuItem(p.toString());
+            it.setOnAction(e -> {
+                try {
+                    controller.open(p);
+                    updateWindowTitle(stage);
+                    applyDocumentToEditor();
+                } catch (Exception ex) {
+                    showError("파일 열기 실패", ex);
+                }
+            });
+            recentMenu.getItems().add(it);
+        }
+    }
+
+    private void setFontSize(double size) {
+        baseFontSize = size;
+        textArea.setStyle("-fx-font-size: " + baseFontSize + "px;");
+    }
+
     private void doFind(Stage stage) {
         TextInputDialog dlg = new TextInputDialog();
         dlg.setTitle("Find");
@@ -265,5 +318,44 @@ public class App extends Application {
             }
         });
     }
-}
 
+    private void doReplace(Stage stage) {
+        Dialog<ButtonType> dlg = new Dialog<>();
+        dlg.setTitle("Replace");
+        dlg.setHeaderText("문자열 바꾸기");
+        dlg.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        TextField findField = new TextField();
+        TextField replField = new TextField();
+        CheckBox all = new CheckBox("Replace All");
+        GridPane grid = new GridPane();
+        grid.setHgap(8); grid.setVgap(8);
+        grid.addRow(0, new Label("Find:"), findField);
+        grid.addRow(1, new Label("Replace:"), replField);
+        grid.add(all, 1, 2);
+        dlg.getDialogPane().setContent(grid);
+        dlg.initOwner(stage);
+        dlg.showAndWait().ifPresent(bt -> {
+            if (bt != ButtonType.OK) return;
+            String f = findField.getText();
+            String r = replField.getText();
+            if (f == null || f.isEmpty()) return;
+            String content = controller.getText();
+            if (all.isSelected()) {
+                controller.applyUserEdit(content.replace(f, r));
+                applyDocumentToEditor();
+            } else {
+                int start = Math.max(0, textArea.getCaretPosition());
+                int idx = content.indexOf(f, start);
+                if (idx < 0 && start > 0) idx = content.indexOf(f);
+                if (idx >= 0) {
+                    String newText = content.substring(0, idx) + r + content.substring(idx + f.length());
+                    controller.applyUserEdit(newText);
+                    applyDocumentToEditor();
+                    textArea.positionCaret(idx + r.length());
+                } else {
+                    showError("바꾸기", new RuntimeException("문자열을 찾을 수 없습니다."));
+                }
+            }
+        });
+    }
+}
