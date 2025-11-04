@@ -39,6 +39,18 @@ public class PreferencesService {
     public void setBoolean(String key, boolean value) { props.setProperty(key, Boolean.toString(value)); }
     public void setDouble(String key, double value) { props.setProperty(key, Double.toString(value)); }
     public void setInt(String key, int value) { props.setProperty(key, Integer.toString(value)); }
+    public void setString(String key, String value) {
+        if (value == null) {
+            props.remove(key);
+        } else {
+            props.setProperty(key, value);
+        }
+    }
+
+    public String getString(String key, String def) {
+        String v = props.getProperty(key);
+        return v == null ? def : v;
+    }
 
     public void save() {
         try {
@@ -58,4 +70,3 @@ public class PreferencesService {
         } catch (IOException ignored) {}
     }
 }
-

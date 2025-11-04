@@ -24,6 +24,8 @@ public class App extends Application {
     private RecentFilesService recentFiles;
     private double baseFontSize = 13.0;
     private PreferencesService prefs;
+    private java.nio.file.attribute.FileTime lastKnownMtime;
+    private java.util.concurrent.ScheduledExecutorService watcherExec;
 
     @Override
     public void start(Stage stage) {
@@ -47,6 +49,7 @@ public class App extends Application {
         baseFontSize = prefs.getDouble("font.size", baseFontSize);
         textArea.setStyle("-fx-font-size: " + baseFontSize + "px;");
         textArea.setWrapText(prefs.getBoolean("view.wrap", false));
+        textArea.setEditable(!prefs.getBoolean("view.readOnly", false));
         enableDragAndDropOpen();
         textArea.addEventFilter(KeyEvent.KEY_PRESSED, this::handleShortcuts);
         textArea.textProperty().addListener((obs, oldText, newText) -> {
@@ -98,6 +101,19 @@ public class App extends Application {
         stage.show();
 
         autoSaveService.start();
+
+        // 마지막 세션 파일 자동 열기
+        String last = prefs.getString("session.lastFile", null);
+        if (last != null && !last.isBlank()) {
+            try {
+                java.nio.file.Path lp = java.nio.file.Paths.get(last);
+                if (java.nio.file.Files.exists(lp)) {
+                    controller.open(lp);
+                    applyDocumentToEditor();
+                    updateWindowTitle(stage);
+                }
+            } catch (Exception ignored) {}
+        }
     }
 
     private void handleShortcuts(KeyEvent event) {
@@ -143,6 +159,7 @@ public class App extends Application {
         miSave.setAccelerator(new KeyCodeCombination(javafx.scene.input.KeyCode.S, KeyCombination.CONTROL_DOWN));
 
         miNew.setOnAction(e -> {
+            if (!confirmDiscardIfDirty(stage)) return;
             controller.newDocument();
             updateWindowTitle(stage);
             applyDocumentToEditor();
@@ -154,6 +171,7 @@ public class App extends Application {
             java.io.File file = chooser.showOpenDialog(stage);
             if (file != null) {
                 try {
+                    if (!confirmDiscardIfDirty(stage)) return;
                     controller.open(file.toPath());
                     updateWindowTitle(stage);
                     applyDocumentToEditor();
@@ -206,6 +224,12 @@ public class App extends Application {
         Menu menuView = new Menu("View");
         MenuItem miWrap = new MenuItem("Toggle Word Wrap");
         miWrap.setOnAction(e -> textArea.setWrapText(!textArea.isWrapText()));
+        CheckMenuItem miReadOnly = new CheckMenuItem("Read-Only");
+        miReadOnly.setSelected(!textArea.isEditable());
+        miReadOnly.setOnAction(e -> textArea.setEditable(!miReadOnly.isSelected()));
+        CheckMenuItem miDark = new CheckMenuItem("Dark Theme");
+        miDark.setSelected(isDarkTheme());
+        miDark.setOnAction(e -> applyDarkTheme(miDark.isSelected()));
         MenuItem miZoomIn = new MenuItem("Zoom In");
         MenuItem miZoomOut = new MenuItem("Zoom Out");
         MenuItem miZoomReset = new MenuItem("Reset Zoom");
@@ -215,7 +239,7 @@ public class App extends Application {
         miZoomIn.setOnAction(e -> setFontSize(baseFontSize + 1));
         miZoomOut.setOnAction(e -> setFontSize(Math.max(8, baseFontSize - 1)));
         miZoomReset.setOnAction(e -> setFontSize(13));
-        menuView.getItems().addAll(miWrap, new SeparatorMenuItem(), miZoomIn, miZoomOut, miZoomReset);
+        menuView.getItems().addAll(miWrap, miReadOnly, miDark, new SeparatorMenuItem(), miZoomIn, miZoomOut, miZoomReset);
 
         return new MenuBar(menuFile, menuEdit, menuView);
     }
@@ -227,12 +251,16 @@ public class App extends Application {
                 chooser.setTitle("Save File");
                 java.io.File file = chooser.showSaveDialog(stage);
                 if (file == null) return;
+                prepareContentForSave();
                 controller.saveAs(file.toPath());
             } else {
+                prepareContentForSave();
                 controller.save();
             }
             updateWindowTitle(stage);
             recentFiles.push(controller.getCurrentFile());
+            prefs.setString("session.lastFile", controller.getCurrentFile() == null ? null : controller.getCurrentFile().toString());
+            prefs.save();
         } catch (Exception ex) {
             showError("파일 저장 실패", ex);
         }
@@ -382,6 +410,7 @@ public class App extends Application {
             if (db.hasFiles() && !db.getFiles().isEmpty()) {
                 java.io.File f = db.getFiles().get(0);
                 try {
+                    if (!confirmDiscardIfDirty((Stage) textArea.getScene().getWindow())) { e.setDropCompleted(false); e.consume(); return; }
                     controller.open(f.toPath());
                     applyDocumentToEditor();
                     updateWindowTitle((Stage) textArea.getScene().getWindow());
@@ -465,5 +494,62 @@ public class App extends Application {
                 }
             }
         });
+    }
+
+    private boolean confirmDiscardIfDirty(Stage stage) {
+        if (!isDirty()) return true;
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
+                "변경 사항이 있습니다. 저장하시겠습니까?",
+                ButtonType.YES, ButtonType.NO, ButtonType.CANCEL);
+        alert.setTitle("변경사항 확인");
+        alert.initOwner(stage);
+        ButtonType result = alert.showAndWait().orElse(ButtonType.CANCEL);
+        if (result == ButtonType.YES) {
+            doSave(stage, controller.getCurrentFile() == null);
+            return !isDirty();
+        } else if (result == ButtonType.NO) {
+            return true;
+        }
+        return false;
+    }
+
+    private void prepareContentForSave() {
+        boolean trim = prefs.getBoolean("save.trimTrailingWhitespace", true);
+        boolean ensureNl = prefs.getBoolean("save.ensureFinalNewline", true);
+        String text = controller.getText();
+        if (trim) {
+            String[] lines = text.split("\\r?\\n", -1);
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < lines.length; i++) {
+                String ln = lines[i].replaceAll("[\\t ]+$", "");
+                sb.append(ln);
+                if (i < lines.length - 1) sb.append("\n");
+            }
+            text = sb.toString();
+        }
+        if (ensureNl && (text.isEmpty() || text.charAt(text.length()-1) != '\n')) {
+            text = text + "\n";
+        }
+        if (!text.equals(controller.getText())) {
+            controller.applyUserEdit(text);
+            applyDocumentToEditor();
+        }
+    }
+
+    private void applyDarkTheme(boolean on) {
+        var scene = textArea.getScene();
+        if (scene == null) return;
+        if (on) {
+            scene.getRoot().setStyle("-fx-base: #2b2b2b; -fx-background-color: #2b2b2b; -fx-text-fill: #e6e6e6;");
+            textArea.setStyle("-fx-control-inner-background: #313335; -fx-highlight-fill: #214283; -fx-highlight-text-fill: white; -fx-text-fill: #e6e6e6; -fx-font-size: " + baseFontSize + "px;");
+        } else {
+            scene.getRoot().setStyle("");
+            textArea.setStyle("-fx-font-size: " + baseFontSize + "px;");
+        }
+    }
+
+    private boolean isDarkTheme() {
+        var scene = textArea.getScene();
+        return scene != null && scene.getRoot().getStyle() != null && !scene.getRoot().getStyle().isBlank();
     }
 }
